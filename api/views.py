@@ -1,16 +1,117 @@
-from django.shortcuts import render
+from datetime import date
+import uuid
 
+from django.shortcuts import render
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
-from .models import User , Client , Commerciaux,Prets ,Compte ,Produits,Recus
+
+from .models import User , Client , Commerciaux,Prets ,Compte ,Produits,Recus,Transaction,Operation
 from .serializers import UserSerializer, UserListSerializer ,ClientSerializer, ClientListSerializer,CommerciauxSerializer,CommerciauxListSerializer
-from .serializers import  PretsSerializer, PretsListSerializer,CompteSerializer,CompteListSerializer,CompteBalanceSerializer ,ProduitsSerializer,ProduitsListSerializer
+from .serializers import  PretsSerializer, PretsListSerializer,CompteSerializer,CompteListSerializer,CompteBalanceSerializer ,ProduitsSerializer,ProduitsListSerializer, OperationSerializer, OperationListSerializer
 from .serializers import RecusSerializer,RecusListSerializer,RecusCancelSerializer
-from django.db.models import Sum
+from .serializers import TransactionSerializer,TransactionListSerializer,TransactionAmountSerializer,TransactionValidateBatchSerializer
+from django.db.models import Sum, Count
+
+
+
+from django.contrib.auth.hashers import check_password
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import AuthenticationFailed
+from .authentication import generate_access_token, generate_refresh_token, decode_token
+from django.db.models import Q  # ← pour corriger is_cancelled
+
+
+# ✅ LOGIN — retourne access + refresh JWT
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login(request):
+    code     = request.data.get('code')
+    password = request.data.get('password')
+
+    if not code or not password:
+        return Response(
+            {'error': "Les champs 'code' et 'password' sont requis."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        user = User.objects.get(code=code, deleted_at__isnull=True)
+    except User.DoesNotExist:
+        return Response({'error': 'Utilisateur introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not check_password(password, user.password):
+        return Response({'error': 'Mot de passe incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    access  = generate_access_token(user)
+    refresh = generate_refresh_token(user)  # ← stocké dans remember_token
+
+    return Response({
+        'access':      access,   # ← JWT valide 30 min
+        'refresh':     refresh,  # ← JWT valide 1 jour
+        'user_code':   user.code,
+        'role_name':   user.role_name,
+        'agence_code': user.agence_code,
+    }, status=status.HTTP_200_OK)
+
+
+# ✅ REFRESH — échange le refresh contre un nouveau access
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def token_refresh(request):
+    refresh_token = request.data.get('refresh')
+
+    if not refresh_token:
+        return Response(
+            {'error': "Le champ 'refresh' est requis."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        payload = decode_token(refresh_token)
+    except AuthenticationFailed as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if payload.get('type') != 'refresh':
+        return Response(
+            {'error': 'Token invalide. Fournissez votre refresh token.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        user = User.objects.get(
+            id=payload['user_id'],
+            remember_token=refresh_token,  # ← vérifie que le token n'est pas révoqué
+            deleted_at__isnull=True
+        )
+    except User.DoesNotExist:
+        return Response(
+            {'error': 'Refresh token révoqué ou utilisateur introuvable.'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    # Rotation automatique : nouveau refresh à chaque appel
+    new_access  = generate_access_token(user)
+    new_refresh = generate_refresh_token(user)  # ← l'ancien est remplacé en base
+
+    return Response({
+        'access':  new_access,
+        'refresh': new_refresh,
+    }, status=status.HTTP_200_OK)
+
+
+# ✅ LOGOUT — révoque le refresh token
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    request.user.remember_token = None
+    request.user.save()
+    return Response({'message': 'Déconnexion réussie.'}, status=status.HTTP_200_OK)
+
 
 
 
@@ -439,6 +540,20 @@ def prets_list(request):
         }, status=status.HTTP_200_OK)
 
     elif request.method == 'POST':
+        data = request.data.copy()
+        
+        data.setdefault('agence_code', getattr(request.user, 'agence_code', ''))
+        data.setdefault('user_code',   getattr(request.user, 'code', ''))
+        data.setdefault('status',      'pending')
+        data.setdefault('working_date_day', date.today().isoformat())
+        data.setdefault('effective_date',   date.today().isoformat())
+        
+        mois_annee = date.today().strftime('%m%Y')
+        reference = f"PRT-{mois_annee}-{uuid.uuid4().hex[:6].upper()}"
+        while Prets.objects.filter(reference=reference).exists():
+            reference = f"PRT-{mois_annee}-{uuid.uuid4().hex[:6].upper()}"
+        data['reference'] = reference
+        
         serializer = PretsSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -974,7 +1089,7 @@ def recus_list(request):
             if is_cancelled.lower() == 'true':
                 recus = recus.exclude(cancel_by__isnull=True).exclude(cancel_by='')
             else:
-                recus = recus.filter(cancel_by__isnull=True) | recus.filter(cancel_by='')
+                recus = recus.filter(Q(cancel_by__isnull=True) | Q(cancel_by=''))
 
         serializer = RecusListSerializer(recus, many=True)
         return Response({
@@ -1106,3 +1221,353 @@ def recus_cancel(request, pk):
         }, status=status.HTTP_200_OK)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'POST'])
+def transaction_list(request):
+    """
+    GET  /api/transactions/
+        Liste les transactions avec filtres.
+    """
+    if request.method == 'GET':
+        transactions = Transaction.objects.filter(deleted_at__isnull=True)
+
+        sale_agent_code  = request.query_params.get('sale_agent_code')
+        agence_code      = request.query_params.get('agence_code')
+        txn_status       = request.query_params.get('status')
+        working_date_day = request.query_params.get('working_date_day')
+
+        if sale_agent_code:
+            transactions = transactions.filter(sale_agent_code=sale_agent_code)
+        if agence_code:
+            transactions = transactions.filter(agence_code=agence_code)
+        if txn_status:
+            transactions = transactions.filter(status=txn_status)
+        if working_date_day:
+            transactions = transactions.filter(working_date_day=working_date_day)
+
+        agg = transactions.aggregate(total=Sum('amount'), count=Count('id'))
+
+        return Response({
+            'count':        agg['count'] or 0,
+            'total_amount': agg['total'] or 0,
+            'results':      TransactionListSerializer(transactions, many=True).data,
+        })
+
+    elif request.method == 'POST':
+        serializer = TransactionSerializer(data=request.data)
+        if serializer.is_valid():
+            transaction = serializer.save(status='pending')
+            return Response(
+                TransactionSerializer(transaction).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'DELETE'])
+def transaction_detail(request, pk):
+    """
+    GET    /api/transactions/<pk>/
+        Détail complet d'une transaction.
+
+    """
+    transaction = get_object_or_404(Transaction, pk=pk, deleted_at__isnull=True)
+
+    if request.method == 'GET':
+        return Response(TransactionSerializer(transaction).data)
+
+    elif request.method == 'DELETE':
+        if transaction.status == 'validated':
+            return Response(
+                {'error': "Impossible de supprimer une transaction déjà validée."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        transaction.deleted_at = timezone.now()
+        transaction.status     = 'cancelled'
+        transaction.save()
+        return Response(
+            {'message': f"Transaction '{transaction.reference}' supprimée."},
+            status=status.HTTP_200_OK
+        )
+
+
+@api_view(['PATCH'])
+def transaction_update_amount(request, pk):
+    """
+    PATCH /api/transactions/<pk>/update-amount/
+    """
+    transaction = get_object_or_404(Transaction, pk=pk, deleted_at__isnull=True)
+
+    if transaction.status == 'validated':
+        return Response(
+            {'error': "Impossible de modifier une transaction déjà validée."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer = TransactionAmountSerializer(data=request.data)
+    if serializer.is_valid():
+        transaction.amount = serializer.validated_data['amount']
+        transaction.save(update_fields=['amount', 'updated_at'])
+        return Response({
+            'id':        transaction.id,
+            'reference': transaction.reference,
+            'amount':    transaction.amount,
+        })
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+@api_view(['PATCH'])
+def transaction_validate_batch(request):
+    """
+    PATCH /api/transactions/validate-batch/
+    
+    """
+    serializer = TransactionValidateBatchSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    ids          = serializer.validated_data['ids']
+    validated_by = serializer.validated_data['validated_by']
+    now          = timezone.now()
+
+    updated = Transaction.objects.filter(
+        id__in         = ids,
+        status         = 'pending',
+        deleted_at__isnull = True,
+    ).update(
+        status       = 'validated',
+        validated_by = validated_by,
+        validated_at = now,
+    )
+
+    total = Transaction.objects.filter(
+        id__in  = ids,
+        status  = 'validated',
+    ).aggregate(total=Sum('amount'))['total'] or 0
+
+    return Response({
+        'validated_count': updated,
+        'total_amount':    total,
+        'message':         f"{updated} transaction(s) validée(s) avec succès.",
+    })
+
+
+@api_view(['GET'])
+def transaction_agent_today(request, sale_agent_code):
+    """
+    GET /api/transactions/agent/<sale_agent_code>/today/
+
+    """
+    today = date.today()
+
+    transactions = Transaction.objects.filter(
+        sale_agent_code  = sale_agent_code,
+        working_date_day = today,
+        status           = 'pending',
+        deleted_at__isnull = True,
+    )
+
+    agg = transactions.aggregate(total=Sum('amount'), count=Count('id'))
+
+    return Response({
+        'sale_agent_code': sale_agent_code,
+        'date':            today.isoformat(),
+        'count':           agg['count'] or 0,
+        'total_amount':    agg['total'] or 0,
+        'results':         TransactionListSerializer(transactions, many=True).data,
+    })
+    
+    
+
+@api_view(['GET', 'POST'])
+def operation_list(request):
+    """
+    GET  /api/operations/
+        ?type_operation=retrait|versement
+        ?agence_code=C-03
+        ?customer_code=CL-C-03-000326
+        ?working_date_day=2026-05-14
+
+    POST /api/operations/
+        → Enregistrement immédiat, aucune validation requise.
+        Body minimal :
+        {
+            "type_operation": "versement",
+            "customer_code":  "CL-C-03-000326",
+            "customer_name":  "JIOKENG Paul",
+            "compte_number":  "571000-C03-000326-00",
+            "amount":         50000
+        }
+    """
+    if request.method == 'GET':
+        operations = Operation.objects.filter(deleted_at__isnull=True)
+
+        type_op          = request.query_params.get('type_operation')
+        agence_code      = request.query_params.get('agence_code')
+        customer_code    = request.query_params.get('customer_code')
+        working_date_day = request.query_params.get('working_date_day')
+
+        if type_op:
+            operations = operations.filter(type_operation=type_op)
+        if agence_code:
+            operations = operations.filter(agence_code=agence_code)
+        if customer_code:
+            operations = operations.filter(customer_code=customer_code)
+        if working_date_day:
+            operations = operations.filter(working_date_day=working_date_day)
+
+        agg = operations.aggregate(total=Sum('amount'), count=Count('id'))
+
+        return Response({
+            'count':        agg['count'] or 0,
+            'total_amount': agg['total'] or 0,
+            'results':      OperationListSerializer(operations, many=True).data,
+        })
+   
+    elif request.method == 'POST':
+        serializer = OperationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data           = serializer.validated_data
+        type_op        = data.get('type_operation')
+        compte_number  = data.get('compte_number')
+        montant        = data.get('amount')
+
+        # ── 1. Récupérer le compte si fourni ──────────────────────────
+        compte = None
+        if compte_number:
+            try:
+                compte = Compte.objects.get(number=compte_number, deleted_at__isnull=True)
+            except Compte.DoesNotExist:
+                return Response(
+                    {'error': f"Compte '{compte_number}' introuvable."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        # ── 2. Vérification solde suffisant pour un retrait ───────────
+        if type_op == 'retrait' and compte:
+            if compte.available_balance < montant:
+                return Response(
+                    {
+                        'error': "Solde insuffisant.",
+                        'solde_disponible': str(compte.available_balance),
+                        'montant_demande':  str(montant),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # ── 3. Sauvegarder l'opération ────────────────────────────────
+        operation = serializer.save()
+
+        # ── 4. Mettre à jour le solde du compte ───────────────────────
+        if compte:
+            if type_op == 'versement':
+                compte.balance += montant
+            elif type_op == 'retrait':
+                compte.balance -= montant
+            compte.save(update_fields=['balance', 'updated_at'])
+        
+        prefix       = 'RTR' if type_op == 'retrait' else 'VRS'
+        recu_number  = f"{prefix}-{date.today().strftime('%m%Y')}-{uuid.uuid4().hex[:6].upper()}"
+        while Recus.objects.filter(number=recu_number).exists():
+            recu_number = f"{prefix}-{date.today().strftime('%m%Y')}-{uuid.uuid4().hex[:6].upper()}"
+
+        recu = Recus.objects.create(
+            number           = recu_number,
+            is_use           = True,
+            detail           = f"{type_op.upper()} de {montant} FCFA — Compte {compte_number}",
+            working_date_day = date.today(),
+            agence_code      = data.get('agence_code'),
+            user_code        = data.get('user_code'),
+        )
+        
+        
+        operation.recu_number = recu.number
+        operation.save(update_fields=['recu_number'])
+
+        # ── 5. Retourner l'opération + le nouveau solde ───────────────
+        response_data = OperationSerializer(operation).data
+        if compte:
+            response_data['nouveau_solde']    = str(compte.balance)
+            response_data['solde_disponible'] = str(compte.available_balance)
+        response_data['recu'] = {                                        # ← NOUVEAU
+            'number':           recu.number,
+            'working_date_day': str(recu.working_date_day),
+            'detail':           recu.detail,
+        }
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
+@api_view(['GET', 'DELETE'])
+def operation_detail(request, pk):
+    """
+    GET    /api/operations/<pk>/
+    DELETE /api/operations/<pk>/  → soft delete uniquement
+    """
+    operation = get_object_or_404(Operation, pk=pk, deleted_at__isnull=True)
+
+    if request.method == 'GET':
+        return Response(OperationSerializer(operation).data)
+
+    elif request.method == 'DELETE':
+        operation.deleted_at = timezone.now()
+        operation.save()
+        return Response(
+            {'message': f"Opération '{operation.reference}' supprimée."},
+            status=status.HTTP_200_OK
+        )
+
+
+@api_view(['GET'])
+def operations_by_client(request, customer_code):
+    """
+    GET /api/operations/client/<customer_code>/
+        ?type_operation=retrait|versement
+    """
+    operations = Operation.objects.filter(
+        customer_code=customer_code,
+        deleted_at__isnull=True,
+    )
+
+    type_op = request.query_params.get('type_operation')
+    if type_op:
+        operations = operations.filter(type_operation=type_op)
+
+    agg = operations.aggregate(total=Sum('amount'), count=Count('id'))
+    return Response({
+        'customer_code': customer_code,
+        'count':         agg['count'] or 0,
+        'total_amount':  agg['total'] or 0,
+        'results':       OperationListSerializer(operations, many=True).data,
+    })
+
+
+@api_view(['GET'])
+def operations_by_agence(request, agence_code):
+    """
+    GET /api/operations/agence/<agence_code>/
+        ?type_operation=retrait|versement
+        ?working_date_day=2026-05-14
+    """
+    operations = Operation.objects.filter(
+        agence_code=agence_code,
+        deleted_at__isnull=True,
+    )
+
+    type_op          = request.query_params.get('type_operation')
+    working_date_day = request.query_params.get('working_date_day')
+    if type_op:
+        operations = operations.filter(type_operation=type_op)
+    if working_date_day:
+        operations = operations.filter(working_date_day=working_date_day)
+
+    agg = operations.aggregate(total=Sum('amount'), count=Count('id'))
+    return Response({
+        'agence_code':  agence_code,
+        'count':        agg['count'] or 0,
+        'total_amount': agg['total'] or 0,
+        'results':      OperationListSerializer(operations, many=True).data,
+    })

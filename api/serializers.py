@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
-from .models import User , Client ,Commerciaux , Prets, Compte, Produits , Recus
+from .models import User , Client ,Commerciaux , Prets, Compte, Produits , Recus , Operation
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -20,17 +20,22 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True},
             'remember_token': {'write_only': True},
+            'username':       {'required': False},
         }
 
     def create(self, validated_data):
+        
+        if 'code' in validated_data and not validated_data.get('username'):
+            validated_data['username'] = validated_data['code']
         if 'password' in validated_data:
             validated_data['password'] = make_password(validated_data['password'])
         return super().create(validated_data)
-
+  
     def update(self, instance, validated_data):
         if 'password' in validated_data:
             validated_data['password'] = make_password(validated_data['password'])
         return super().update(instance, validated_data)
+    
 
 
 class UserListSerializer(serializers.ModelSerializer):
@@ -98,7 +103,7 @@ class CommerciauxSerializer(serializers.ModelSerializer):
         fields = ['id','code','old_code','name','firstname','phone','cni','active','connect','agence_code','user_code',
                  'sale_agent_id','code_collect','cb_commitment_acc','cb_commitment_acc_name','cb_transaction_acc',
                  'cb_transaction_acc_name','cb_excess_acc','cb_excess_acc_name','cb_deficit_acc','cb_deficit_acc_name',
-                  'cb_salary_acc','cb_salary_acc_name','created_at','updated_at','deleted_at',
+                 'cb_salary_acc','cb_salary_acc_name','created_at','updated_at','deleted_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -131,6 +136,20 @@ class PretsSerializer(serializers.ModelSerializer):
                   'deleted_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'reference':          {'required': False, 'allow_blank': True, 'allow_null': True},
+            'status':             {'required': False, 'allow_blank': True},
+            'status_date':        {'required': False, 'allow_null': True},
+            'backdated':          {'required': False, 'allow_null': True},
+            'effective_date':     {'required': False, 'allow_null': True},
+            'first_due_date':     {'required': False, 'allow_null': True},
+            'last_due_date':      {'required': False, 'allow_null': True},
+            'working_date_day':   {'required': False, 'allow_null': True},
+            'refund_account':     {'required': False, 'allow_blank': True, 'allow_null': True},
+            'product_insurance_code': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'agence_code':        {'required': False, 'allow_blank': True},
+            'user_code':          {'required': False, 'allow_blank': True},
+        }
 
     def validate_amount(self, value):
         """Le montant doit être strictement positif."""
@@ -338,3 +357,160 @@ class RecusCancelSerializer(serializers.Serializer):
     """
     cancel_by = serializers.CharField(max_length=100, required=True)
     detail    = serializers.CharField(required=False, allow_blank=True)
+
+from rest_framework import serializers
+from .models import Transaction
+
+
+# ==============================================================================
+# SERIALIZER COMPLET — CREATE / UPDATE / GET détail
+# ==============================================================================
+
+class TransactionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model  = Transaction
+        fields = [
+            'id',
+            'reference',
+            'code',
+            'customer_name',
+            'product_code',
+            'product_name',
+            'compte_number',
+            'recu_number',
+            'amount',
+            'status',
+            'sale_agent_code',
+            'customer_code',
+            'agence_code',
+            'user_code',
+            'validated_by',
+            'working_date_day',
+            'validated_at',
+            # Horodatage
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'reference', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'status':            {'required': False},
+            'customer_code':     {'required': False, 'allow_null': True, 'allow_blank': True},
+            'agence_code':       {'required': False, 'allow_null': True, 'allow_blank': True},
+            'user_code':         {'required': False, 'allow_null': True, 'allow_blank': True},
+            'validated_by':      {'required': False, 'allow_null': True},
+            'validated_at':      {'required': False, 'allow_null': True},
+            'working_date_day':  {'required': False, 'allow_null': True},
+            'customer_name':     {'required': False, 'allow_null': True, 'allow_blank': True},
+            'product_code':      {'required': False, 'allow_null': True, 'allow_blank': True},
+            'product_name':      {'required': False, 'allow_null': True, 'allow_blank': True},
+            'compte_number':     {'required': False, 'allow_null': True, 'allow_blank': True},
+            'recu_number':       {'required': False, 'allow_null': True, 'allow_blank': True},
+        }
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Le montant doit être supérieur à 0 FCFA.")
+        return value
+
+
+class TransactionListSerializer(serializers.ModelSerializer):
+    
+
+    class Meta:
+        model  = Transaction
+        fields = [
+            'id',
+            'reference',
+            'code',
+            'customer_name',
+            'product_code',
+            'product_name',
+            'compte_number',
+            'recu_number',
+            'amount',
+            'status',
+            'sale_agent_code',
+            'working_date_day',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'reference', 'created_at']
+
+
+
+class TransactionAmountSerializer(serializers.Serializer):
+    """
+    Utilisé pour : PATCH /api/transactions/<pk>/update-amount/
+    Correspond à l'input éditable dans la colonne "Montant (FCFA)" du tableau.
+
+    Body : { "amount": 7500 }
+    """
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Le montant doit être supérieur à 0 FCFA.")
+        return value
+
+
+class TransactionValidateBatchSerializer(serializers.Serializer):
+
+    ids          = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+        help_text="Liste des IDs de transactions à valider"
+    )
+    validated_by = serializers.CharField(
+        max_length=100,
+        help_text="User.code de la caissière qui valide"
+    )
+    
+    
+class OperationSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model  = Operation
+        fields = [
+            'id', 'reference', 'type_operation',
+            'customer_code', 'customer_name',
+            'compte_number', 'recu_number',
+            'amount',
+            'agence_code', 'user_code',
+            'working_date_day',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'reference', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'customer_code':    {'required': False, 'allow_null': True, 'allow_blank': True},
+            'customer_name':    {'required': False, 'allow_null': True, 'allow_blank': True},
+            'compte_number':    {'required': False, 'allow_null': True, 'allow_blank': True},
+            'recu_number':      {'required': False, 'allow_null': True, 'allow_blank': True},
+            'agence_code':      {'required': False, 'allow_null': True, 'allow_blank': True},
+            'user_code':        {'required': False, 'allow_null': True, 'allow_blank': True},
+            'working_date_day': {'required': False, 'allow_null': True},
+        }
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Le montant doit être supérieur à 0 FCFA.")
+        return value
+
+    def validate_type_operation(self, value):
+        if value not in ('retrait', 'versement'):
+            raise serializers.ValidationError("type_operation doit être 'retrait' ou 'versement'.")
+        return value
+
+
+class OperationListSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model  = Operation
+        fields = [
+            'id', 'reference', 'type_operation',
+            'customer_code', 'customer_name',
+            'compte_number', 'recu_number',
+            'amount',
+            'agence_code', 'user_code',
+            'working_date_day', 'created_at',
+        ]
+        read_only_fields = ['id', 'reference', 'created_at']

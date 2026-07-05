@@ -2,17 +2,16 @@ from django.contrib import admin
 from django.urls import path
 from api import views
 
+
 urlpatterns = [
-    # Liste et création
+    path('auth/login/',   views.login,         name='login'),
+    path('auth/refresh/', views.token_refresh, name='token-refresh'),
+    path('auth/logout/',  views.logout,        name='logout'),
+    
+    
     path('users/', views.user_list, name='user-list'),
-
-    # Détail, mise à jour et suppression par ID
     path('users/<int:pk>/', views.user_detail, name='user-detail'),
-
-    # Recherche par code unique
     path('users/code/<str:code>/', views.user_by_code, name='user-by-code'),
-
-    # Liste des utilisateurs par agence
     path('users/agence/<str:agence_code>/', views.users_by_agence, name='users-by-agence'),
     
     
@@ -59,8 +58,17 @@ urlpatterns = [
     path('recus/agence/<str:agence_code>/',         views.recus_by_agence,  name='recus-by-agence'),
     path('recus/agent/<str:sale_agent_code>/',      views.recus_by_agent,   name='recus-by-agent'),
     path('recus/<int:pk>/cancel/',                  views.recus_cancel,     name='recus-cancel'),
-
-
+    
+    path('transactions/',                                      views.transaction_list,           name='transaction-list'),
+    path('transactions/<int:pk>/',                             views.transaction_detail,         name='transaction-detail'),
+    path('transactions/<int:pk>/update-amount/',               views.transaction_update_amount,  name='transaction-update-amount'),
+    path('transactions/validate-batch/',                       views.transaction_validate_batch, name='transaction-validate-batch' ),
+    path('transactions/agent/<str:sale_agent_code>/today/',    views.transaction_agent_today,    name='transaction-agent-today'),
+    
+    path('operations/',                             views.operation_list,         name='operation-list'),
+    path('operations/<int:pk>/',                    views.operation_detail,       name='operation-detail'),
+    path('operations/client/<str:customer_code>/',  views.operations_by_client,   name='operations-by-client'),
+    path('operations/agence/<str:agence_code>/',    views.operations_by_agence,   name='operations-by-agence'),
 ]
 
 

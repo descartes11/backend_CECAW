@@ -1,8 +1,27 @@
+from datetime import date
+import uuid
+
 from django.db import models
 from django.contrib.auth.hashers import make_password
+from django.contrib.auth.models import AbstractUser, BaseUserManager, PermissionsMixin
 
+class UserManager(BaseUserManager):
+    def create_user(self, code, password=None, **extra_fields):
+        if not code:
+            raise ValueError("Le code est obligatoire")
 
-class User(models.Model):
+        user = self.model(code=code, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, code, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+
+        return self.create_user(code, password, **extra_fields)
+
+class User(AbstractUser,PermissionsMixin):
     
     code = models.CharField(max_length=100, unique=True)
     name = models.CharField(max_length=150)
@@ -20,15 +39,26 @@ class User(models.Model):
     class Meta:
         db_table = 'users'
         ordering = ['id']
+        
+    USERNAME_FIELD = 'code'   
+    REQUIRED_FIELDS = []
+    objects = UserManager()
 
     def __str__(self):
         return f"{self.code} - {self.firstname} {self.name}"
-
+    
+    
     def save(self, *args, **kwargs):
+    # Hash uniquement si le mot de passe est en clair
+        if self.password and not self.password.startswith(('pbkdf2_', 'bcrypt', '$2b$', '$2y$', 'argon2')):
+            self.password = make_password(self.password)
+        super().save(*args, **kwargs)
+
+    """def save(self, *args, **kwargs):
         # Hash the password only if it's not already hashed
         if self.password and not self.password.startswith('$2y$') and not self.password.startswith('pbkdf2_'):
             self.password = make_password(self.password)
-        super().save(*args, **kwargs)
+        super().save(*args, **kwargs)"""
         
 class Client(models.Model):
     """
@@ -257,6 +287,40 @@ class Prets(models.Model):
 
     def __str__(self):
         return f"{self.reference} - {self.status} - {self.amount}"
+    
+    def save(self, *args, **kwargs):
+        # Génère la référence si elle est vide ou nulle
+        today = date.today()
+        
+        if not self.reference:
+        
+            # Format : PRT-C03-042026-XXXX  (agence + mois/année + 4 chiffres aléatoires)
+        
+            mois_annee = today.strftime('%m%Y')
+            unique_part = str(uuid.uuid4().int)[:4]
+            self.reference = f"PRT-{mois_annee}-{unique_part}"
+            
+            # Garantir l'unicité en cas de collision
+            while Prets.objects.filter(reference=self.reference).exists():
+                unique_part = str(uuid.uuid4().int)[:4]
+                self.reference = f"PRT-{mois_annee}-{unique_part}"
+                
+        if not self.effective_date:
+           self.effective_date = today
+           
+        if self.effective_date and self.number_of_due_dates:
+            from dateutil.relativedelta import relativedelta
+            self.first_due_date = self.effective_date + relativedelta(months=1)
+            self.last_due_date  = self.effective_date + relativedelta(months=self.number_of_due_dates)
+        
+        if not self.status_date:
+            self.status_date = today
+        if not self.working_date_day:
+            self.working_date_day = today
+
+
+        
+        super().save(*args, **kwargs)
 
 
 
@@ -448,3 +512,165 @@ class Recus(models.Model):
     def is_cancelled(self):
         """Retourne True si le reçu a été annulé."""
         return bool(self.cancel_by)
+
+
+
+# ==============================================================================
+# MODÈLE TRANSACTION
+# ==============================================================================
+# Représente une ligne de collecte saisie par la caissière pour le compte
+# d'un agent commercial (Commerciaux).
+#
+# Relations avec les modèles existants (via codes métier, sans FK Django) :
+#   sale_agent_code → Commerciaux.code
+#   customer_code   → Client.code
+#   compte_number   → Compte.number
+#   recu_number     → Recus.number
+#   product_code    → Produits.code
+#   agence_code     → même valeur que l'agent
+#   user_code       → User.code  (caissière qui saisit)
+#   validated_by    → User.code  (caissière qui valide la tournée)
+# ==============================================================================
+
+
+class Transaction(models.Model):
+    """
+    Cycle de vie :
+        pending   → saisie en cours (tournée non encore validée)
+        validated → tournée clôturée via "Valider la tournée"
+        cancelled → supprimée par la caissière avant validation
+    """
+
+    STATUS_CHOICES = [
+        ('pending',   'En attente'),
+        ('validated', 'Validé'),
+        ('cancelled', 'Annulé'),
+    ]
+
+    # --- Référence unique auto-générée ---
+    reference = models.CharField(max_length=100,unique=True, blank=True)
+
+    # --- Champs du formulaire frontend ---
+    code = models.CharField( max_length=100)
+    customer_name = models.CharField( max_length=255, blank=True, null=True)
+    product_code = models.CharField(max_length=100, blank=True, null=True)
+    product_name = models.CharField(max_length=255,blank=True,null=True)
+    compte_number = models.CharField(max_length=100, blank=True, null=True)
+    recu_number = models.CharField(max_length=100,blank=True,null=True)
+    amount = models.DecimalField(max_digits=15,decimal_places=2)
+
+    # --- Statut ---
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    # --- Contexte (rempli automatiquement côté backend) ---
+    sale_agent_code = models.CharField( max_length=100)
+    customer_code = models.CharField(max_length=100, blank=True, null=True)
+    agence_code = models.CharField(max_length=50, blank=True,null=True)
+    user_code = models.CharField( max_length=100, blank=True, null=True)
+    validated_by = models.CharField(max_length=100, blank=True, null=True)
+
+    # --- Dates ---
+    working_date_day = models.DateField(blank=True,null=True)
+    validated_at = models.DateTimeField(blank=True,null=True)
+
+    # --- Horodatage standard ---
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table            = 'transactions'
+        ordering            = ['-created_at']
+        verbose_name        = 'Transaction'
+        verbose_name_plural = 'Transactions'
+        indexes = [
+            # Requête la plus fréquente : tableau du jour pour un agent
+            models.Index(
+                fields=['sale_agent_code', 'working_date_day'],
+                name='idx_trn_agent_date'
+            ),
+            # Vue superviseur : toutes les transactions d'une agence par date
+            models.Index(
+                fields=['agence_code', 'working_date_day'],
+                name='idx_trn_agence_date'
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} | {self.sale_agent_code} | {self.amount} FCFA | {self.status}"
+
+    def save(self, *args, **kwargs):
+        from datetime import date
+
+        # Génère la référence si absente
+        if not self.reference:
+            mois_annee     = date.today().strftime('%m%Y')
+            suffix         = uuid.uuid4().hex[:6].upper()
+            self.reference = f"TRN-{mois_annee}-{suffix}"
+            while Transaction.objects.filter(reference=self.reference).exists():
+                suffix         = uuid.uuid4().hex[:6].upper()
+                self.reference = f"TRN-{mois_annee}-{suffix}"
+
+        # Date du jour par défaut
+        if not self.working_date_day:
+            self.working_date_day = date.today()
+
+        super().save(*args, **kwargs)
+
+
+class Operation(models.Model):
+
+    TYPE_CHOICES = [
+        ('retrait',   'Retrait'),
+        ('versement', 'Versement'),
+    ]
+
+    reference      = models.CharField(max_length=100, unique=True, blank=True)
+    type_operation = models.CharField(max_length=20, choices=TYPE_CHOICES)
+
+    customer_code  = models.CharField(max_length=100, blank=True, null=True)
+    customer_name  = models.CharField(max_length=255, blank=True, null=True)
+    compte_number  = models.CharField(max_length=100, blank=True, null=True)
+    recu_number    = models.CharField(max_length=100, blank=True, null=True)
+
+    amount         = models.DecimalField(max_digits=15, decimal_places=2)
+
+    agence_code    = models.CharField(max_length=50,  blank=True, null=True)
+    user_code      = models.CharField(max_length=100, blank=True, null=True)
+
+    working_date_day = models.DateField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table            = 'operations'
+        ordering            = ['-created_at']
+        verbose_name        = 'Opération'
+        verbose_name_plural = 'Opérations'
+        indexes = [
+            models.Index(fields=['type_operation', 'working_date_day'], name='idx_op_type_date'),
+            models.Index(fields=['agence_code', 'working_date_day'],    name='idx_op_agence_date'),
+            models.Index(fields=['customer_code'],                       name='idx_op_customer'),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} | {self.type_operation.upper()} | {self.amount} FCFA"
+
+    def save(self, *args, **kwargs):
+        from datetime import date
+
+        if not self.reference:
+            prefix         = 'RTR' if self.type_operation == 'retrait' else 'VRS'
+            mois_annee     = date.today().strftime('%m%Y')
+            suffix         = uuid.uuid4().hex[:6].upper()
+            self.reference = f"{prefix}-{mois_annee}-{suffix}"
+            while Operation.objects.filter(reference=self.reference).exists():
+                suffix         = uuid.uuid4().hex[:6].upper()
+                self.reference = f"{prefix}-{mois_annee}-{suffix}"
+
+        if not self.working_date_day:
+            self.working_date_day = date.today()
+
+        super().save(*args, **kwargs)

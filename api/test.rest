@@ -1,8 +1,22 @@
-POST http://localhost:8000/api/users/
+
+POST  http://localhost:8000/api/auth/login/
 Content-Type: application/json
 
+
 {
-  "code": "SONKWA-F4",
+  "code": "admin",
+  "password": "admin123"
+}
+
+
+###
+
+POST http://localhost:8000/api/users/
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc1NzMzMjI0LCJpYXQiOjE3NzU3Mjk2MjQsInR5cGUiOiJhY2Nlc3MifQ.795y7d2tr1EpCezcPGoVppnPa5O9aT_9DXbNDtw7Vgg
+
+{
+  "code": "SONKWA-F3",
   "name": "SONKWA",
   "firstname": "Fernand",
   "phone": "679971829",
@@ -15,14 +29,17 @@ Content-Type: application/json
 ###
 
 GET http://localhost:8000/api/users/
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6ImFkbWluIiwiYWdlbmNlX2NvZGUiOiJBRzAwMSIsImV4cCI6MTc3NDQyOTkzMywiaWF0IjoxNzc0NDI4MTMzLCJ0eXBlIjoiYWNjZXNzIn0.Xv2o52JeQmWjkB2_fDxmbMnj3mdZyNGocfs1y3CwIlA
 
 ###
 
 POST http://localhost:8000/api/clients/
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3NTUwMjM5LCJpYXQiOjE3Nzc1NDY2MzksInR5cGUiOiJhY2Nlc3MifQ.bopCQSo1o188Md_P1XobKjK8vVIxCwP8oFcsPZP7VBM
+
 
 {
-    "code": "CL-C-03-000002",
+    "code": "CL-C-03-000341",
     "name":"JIOKENG FEUTCHOU",
     "firstname":"JEANY",
     "gender": "M",
@@ -37,13 +54,17 @@ Content-Type: application/json
 
 ###
 GET  http://localhost:8000/api/clients/
-
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3NTUwMjM5LCJpYXQiOjE3Nzc1NDY2MzksInR5cGUiOiJhY2Nlc3MifQ.bopCQSo1o188Md_P1XobKjK8vVIxCwP8oFcsPZP7VBM
 ###
+
 POST http://localhost:8000/api/commerciaux/
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3NTUwMjM5LCJpYXQiOjE3Nzc1NDY2MzksInR5cGUiOiJhY2Nlc3MifQ.bopCQSo1o188Md_P1XobKjK8vVIxCwP8oFcsPZP7VBM
+
+
 
 {
-    "code": "C-03-001",
+    "code": "C-03-022",
     "name": "TCHOUTOUO",
     "firstname": "nul",
     "phone": "649731855",
@@ -73,9 +94,10 @@ GET http://localhost:8000/api/commerciaux/
 ###
 POST http://localhost:8000/api/prets/
 Content-Type: application/json
-
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc2NzgxNDI1LCJpYXQiOjE3NzY3Nzc4MjUsInR5cGUiOiJhY2Nlc3MifQ.74AP-DjLvcI3BwUSsJXu7G5pta70yUkNd2ZABP5XeN4
+  
 {
-    "reference": "PRT-C03-052023-2618",
+    "reference": "PRT-C03-052023-2620",
     "amount": "1000000.00",
     "number_of_due_dates": 2,
     "status": "paid",
@@ -92,7 +114,32 @@ Content-Type: application/json
     "user_code": "sonkwa",
     "backdated": false
 }
+###
 
+POST http://localhost:8000/api/prets/
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3NDYzNTQ4LCJpYXQiOjE3Nzc0NTk5NDgsInR5cGUiOiJhY2Nlc3MifQ.t1DRYzZv0zL5_pQPc6DIqjNkx8d7aI6VghdVO_DiolU
+
+{
+    "reference": "PRET-2026-0081",
+    "amount": "500000.00",
+    "number_of_due_dates": 12,
+    "status": "pending",
+    "status_date": "2026-03-30",
+    "backdated": false,
+    "effective_date": "2026-04-01",
+    "first_due_date": "2026-05-01",
+    "last_due_date": "2027-04-01",
+    "working_date_day": "2026-04-01",
+    "refund_account": "CM001234567890",
+    "periodicity_name": "MENSUELLE",
+    "product_loan_code": "PROD-001",
+    "product_insurance_code": "ASSUR-001",
+    "customer_code": "CLI-001",
+    "agence_code": "AGC-001",
+    "manager_code": "USR-001",
+    "user_code": "USR-002"
+}
 ###
 
 GET http://localhost:8000/api/prets/
@@ -101,12 +148,14 @@ GET http://localhost:8000/api/prets/
 
 POST http://localhost:8000/api/comptes/
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3NTUwMjM5LCJpYXQiOjE3Nzc1NDY2MzksInR5cGUiOiJhY2Nlc3MifQ.bopCQSo1o188Md_P1XobKjK8vVIxCwP8oFcsPZP7VBM
+
 
 {
-    "number": "571000-C03-000000-00",
+    "number": "571000-C03-000000-357",
     "name": "COMPTE CAISSE AGENCE : CECAW-BEPANDA",
     "active": true,
-    "balance": "-287514383.00",
+    "balance": "287514383.00",
     "standby_balance": "0.00", 
     "can_take_loans": false,
     "working_date_day": "2024-01-01",
@@ -124,11 +173,13 @@ Content-Type: application/json
 GET http://localhost:8000/api/comptes/
 
 ###
-POST http://localhost:8000/api/comptes/
+POST http://localhost:8000/api/produits/
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc3Mzg3NjMyLCJpYXQiOjE3NzczODQwMzIsInR5cGUiOiJhY2Nlc3MifQ.YhG8zh-jHjclTRSSAFmXRrkDFR1nq0znBDOZGK2xCOE
+
 
 {
-    "code": "PCO-01",
+    "code": "PCO-09",
     "name": "COLLECTE ORDINAIRE",
     "duration": 1,
     "commission_rate": "0.00",
@@ -146,9 +197,11 @@ GET http://localhost:8000/api/comptes/
 
 POST http://localhost:8000/api/recus/
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJ1c2VyX2NvZGUiOiJhZG1pbiIsInJvbGVfbmFtZSI6IkFkbWluIiwiYWdlbmNlX2NvZGUiOiJDLTAxIiwiZXhwIjoxNzc0ODYyNjEwLCJpYXQiOjE3NzQ4NTkwMTAsInR5cGUiOiJhY2Nlc3MifQ.ReZaofD0fnq4BL8COjHMKctPW8tXXScGTlKefklQglU
+
 
 {
-    "number": "4831165B",
+    "number": "5831165c",
     "is_use": true,
     "cancel_by": null,
     "detail": "",
